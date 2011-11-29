@@ -1093,9 +1093,15 @@ static int *calc_pg_raw(struct ceph_osdmap *osdmap, struct ceph_pg pgid,
 				      le32_to_cpu(pool->v.pgp_num),
 				      pool->pgp_num_mask);
 	pps += poolid;
-	*num = crush_do_rule(osdmap->crush, ruleno, pps, osds,
-			     min_t(int, pool->v.size, *num),
-			     preferred, osdmap->osd_weight);
+	if (preferred >= osdmap->crush->max_devices ||
+	    osdmap->crush->device_parents[preferred] == 0)
+	  *num = crush_do_rule(osdmap->crush, ruleno, pps, osds,
+			       min_t(int, pool->v.size, *num),
+			       preferred, osdmap->osd_weight);
+	else
+	  *num = crush_do_rule(osdmap->crush, ruleno, pps, osds,
+			       min_t(int, pool->v.size, *num),
+			       -1, osdmap->osd_weight);
 	return osds;
 }
 
