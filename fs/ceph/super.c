@@ -131,6 +131,8 @@ enum {
 	Opt_rbytes,
 	Opt_norbytes,
 	Opt_noasyncreaddir,
+	Opt_usedcache,
+	Opt_nousedcache,
 	Opt_ino32,
 };
 
@@ -152,6 +154,8 @@ static match_table_t fsopt_tokens = {
 	{Opt_rbytes, "rbytes"},
 	{Opt_norbytes, "norbytes"},
 	{Opt_noasyncreaddir, "noasyncreaddir"},
+	{Opt_usedcache, "usedcache"},
+	{Opt_nousedcache, "nousedcache"},
 	{Opt_ino32, "ino32"},
 	{-1, NULL}
 };
@@ -230,6 +234,12 @@ static int parse_fsopt_token(char *c, void *private)
 		break;
 	case Opt_noasyncreaddir:
 		fsopt->flags |= CEPH_MOUNT_OPT_NOASYNCREADDIR;
+		break;
+	case Opt_usedcache:
+		fsopt->flags |= CEPH_MOUNT_OPT_USEDCACHE;
+		break;
+	case Opt_nousedcache:
+		fsopt->flags &= ~CEPH_MOUNT_OPT_USEDCACHE;
 		break;
 	case Opt_ino32:
 		fsopt->flags |= CEPH_MOUNT_OPT_INO32;
@@ -377,6 +387,10 @@ static int ceph_show_options(struct seq_file *m, struct vfsmount *mnt)
 		seq_puts(m, ",norbytes");
 	if (fsopt->flags & CEPH_MOUNT_OPT_NOASYNCREADDIR)
 		seq_puts(m, ",noasyncreaddir");
+	if (fsopt->flags & CEPH_MOUNT_OPT_USEDCACHE)
+		seq_puts(m, ",usedcache");
+	else
+		seq_puts(m, ",nousedcache");
 
 	if (fsopt->wsize)
 		seq_printf(m, ",wsize=%d", fsopt->wsize);
