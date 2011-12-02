@@ -1106,7 +1106,7 @@ void ceph_dir_set_complete(struct inode *inode)
 {
 	struct dentry *dentry = __d_find_any_alias(inode);
 	
-	if (dentry && ceph_dentry(dentry)) {
+	if (false && dentry && ceph_dentry(dentry)) {
 		dout(" marking %p (%p) complete\n", inode, dentry);
 		set_bit(CEPH_D_COMPLETE, &ceph_dentry(dentry)->flags);
 	}
