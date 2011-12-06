@@ -1196,7 +1196,7 @@ static int rbd_req_sync_notify_ack(struct rbd_device *dev,
 	if (ret < 0)
 		return ret;
 
-	ops[0].watch.ver = cpu_to_le64(dev->header.obj_version);
+	ops[0].watch.ver = cpu_to_le64(ver);
 	ops[0].watch.cookie = notify_id;
 	ops[0].watch.flag = 0;
 
@@ -1216,6 +1216,7 @@ static int rbd_req_sync_notify_ack(struct rbd_device *dev,
 static void rbd_watch_cb(u64 ver, u64 notify_id, u8 opcode, void *data)
 {
 	struct rbd_device *dev = (struct rbd_device *)data;
+	u64 hver;
 	int rc;
 
 	if (!dev)
@@ -1225,12 +1226,13 @@ static void rbd_watch_cb(u64 ver, u64 notify_id, u8 opcode, void *data)
 		notify_id, (int)opcode);
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
 	rc = __rbd_refresh_header(dev);
+	hver = dev->header.obj_version;
 	mutex_unlock(&ctl_mutex);
 	if (rc)
 		pr_warning(RBD_DRV_NAME "%d got notification but failed to "
 			   " update snaps: %d\n", dev->major, rc);
 
-	rbd_req_sync_notify_ack(dev, ver, notify_id, dev->obj_md_name);
+	rbd_req_sync_notify_ack(dev, hver, notify_id, dev->obj_md_name);
 }
 
 /*
@@ -1741,6 +1743,7 @@ static int __rbd_refresh_header(struct rbd_device *rbd_dev)
 	kfree(rbd_dev->header.snap_names);
 	kfree(rbd_dev->header.snap_sizes);
 
+	rbd_dev->header.obj_version = h.obj_version;
 	rbd_dev->header.image_size = h.image_size;
 	rbd_dev->header.total_snaps = h.total_snaps;
 	rbd_dev->header.snapc = h.snapc;
