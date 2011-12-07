@@ -971,11 +971,21 @@ static int dentry_lease_is_valid(struct dentry *dentry)
 	struct inode *dir = NULL;
 	u32 seq = 0;
 
+retry:
 	spin_lock(&dentry->d_lock);
 	di = ceph_dentry(dentry);
 	if (di->lease_session) {
 		s = di->lease_session;
+		ceph_get_mds_session(s);
+		spin_unlock(&dentry->d_lock);
 		spin_lock(&s->s_cap_lock);
+		spin_lock(&dentry->d_lock);
+		if (di->lease_session != s) {
+			spin_unlock(&s->s_cap_lock);
+			spin_unlock(&dentry->d_lock);
+			ceph_put_mds_session(s);
+			goto retry;
+		}
 		gen = s->s_cap_gen;
 		ttl = s->s_cap_ttl;
 		spin_unlock(&s->s_cap_lock);
