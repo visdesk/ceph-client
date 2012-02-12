@@ -38,7 +38,7 @@ struct ext4_xattr_entry {
 	__u8	e_name_len;	/* length of name */
 	__u8	e_name_index;	/* attribute name index */
 	__le16	e_value_offs;	/* offset in disk block of value */
-	__le32	e_value_block;	/* disk block attribute is stored on (n/i) */
+	__le32	e_value_inum;	/* inode in which the value is stored */
 	__le32	e_value_size;	/* size of attribute value */
 	__le32	e_hash;		/* hash value of name and value */
 	char	e_name[0];	/* attribute name */
@@ -62,6 +62,15 @@ struct ext4_xattr_entry {
 		EXT4_GOOD_OLD_INODE_SIZE + \
 		EXT4_I(inode)->i_extra_isize))
 #define IFIRST(hdr) ((struct ext4_xattr_entry *)((hdr)+1))
+
+#define i_xattr_inode_parent i_mtime.tv_sec
+
+/*
+ * The minimum size of EA value when you start storing it in an external inode
+ * size of block - size of header - size of 1 entry - 4 null bytes
+*/
+#define EXT4_XATTR_MIN_LARGE_EA_SIZE(b)					\
+	((b) - EXT4_XATTR_LEN(3) - sizeof(struct ext4_xattr_header) - 4)
 
 # ifdef CONFIG_EXT4_FS_XATTR
 

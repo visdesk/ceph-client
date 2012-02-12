@@ -1432,6 +1432,7 @@ static inline void ext4_clear_state_flags(struct ext4_inode_info *ei)
 					 EXT4_FEATURE_INCOMPAT_EXTENTS| \
 					 EXT4_FEATURE_INCOMPAT_64BIT| \
 					 EXT4_FEATURE_INCOMPAT_FLEX_BG| \
+					 EXT4_FEATURE_INCOMPAT_EA_INODE| \
 					 EXT4_FEATURE_INCOMPAT_MMP)
 #define EXT4_FEATURE_RO_COMPAT_SUPP	(EXT4_FEATURE_RO_COMPAT_SPARSE_SUPER| \
 					 EXT4_FEATURE_RO_COMPAT_LARGE_FILE| \
@@ -1744,6 +1745,12 @@ struct mmpd_data {
  * Maximum interval for MMP checking in seconds.
  */
 #define EXT4_MMP_MAX_CHECK_INTERVAL	300UL
+
+/*
+ * Maximum size of xattr attributes for FEATURE_INCOMPAT_EA_INODE 1Mb
+ * This limit is arbitrary, but is reasonable for the xattr API.
+ */
+#define EXT4_XATTR_MAX_LARGE_EA_SIZE    (1024 * 1024)
 
 /*
  * Function prototypes
