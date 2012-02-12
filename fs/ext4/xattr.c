@@ -645,7 +645,8 @@ static int
 ext4_xattr_inode_write(handle_t *handle, struct inode *ea_inode,
 		       const void *buf, int bufsize)
 {
-	struct buffer_head *bh = NULL, dummy;
+	struct buffer_head *bh = NULL;
+	struct ext4_map_blocks map;
 	unsigned long block = 0;
 	unsigned blocksize = ea_inode->i_sb->s_blocksize;
 	unsigned max_blocks = (bufsize + blocksize - 1) >> ea_inode->i_blkbits;
@@ -658,8 +659,11 @@ retry:
 		block += ret;
 		max_blocks -= ret;
 
-		ret = ext4_get_blocks(handle, ea_inode, block, max_blocks,
-				      &dummy, EXT4_GET_BLOCKS_CREATE);
+		map.m_lblk = block;
+		map.m_len = max_blocks;
+
+		ret = ext4_map_blocks(handle, ea_inode, &map,
+				      EXT4_GET_BLOCKS_CREATE);
 		if (ret <= 0) {
 			ext4_mark_inode_dirty(handle, ea_inode);
 			if (ret == -ENOSPC &&
@@ -689,7 +693,7 @@ retry:
 
 		memcpy(bh->b_data, buf, csize);
 		set_buffer_uptodate(bh);
-		ext4_journal_dirty_metadata(handle, bh);
+		ext4_handle_dirty_metadata(handle, ea_inode, bh);
 
 		buf += csize;
 		wsize += csize;
@@ -720,7 +724,8 @@ ext4_xattr_inode_create(handle_t *handle, struct inode *inode)
 	 * in the same group, or nearby one.
 	 */
 	ea_inode = ext4_new_inode(handle, inode->i_sb->s_root->d_inode,
-				  S_IFREG|0600, NULL, inode->i_ino + 1);
+				  S_IFREG|0600, NULL, inode->i_ino + 1,
+				  NULL);
 
 	if (!IS_ERR(ea_inode)) {
 		ea_inode->i_op = &ext4_file_inode_operations;
@@ -753,7 +758,7 @@ ext4_xattr_inode_unlink(struct inode *inode, int ea_ino)
 	if (err)
 		return err;
 
-	ea_inode->i_nlink = 0;
+	clear_nlink(ea_inode);
 	iput(ea_inode);
 
 	return 0;
@@ -776,7 +781,7 @@ ext4_xattr_inode_set(handle_t *handle, struct inode *inode, int *ea_ino,
 
 	err = ext4_xattr_inode_write(handle, ea_inode, value, value_len);
 	if (err)
-		ea_inode->i_nlink = 0;
+		clear_nlink(ea_inode);
 	else
 		*ea_ino = ea_inode->i_ino;
 
