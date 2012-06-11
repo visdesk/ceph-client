@@ -48,6 +48,8 @@ static void queue_con(struct ceph_connection *con);
 static void con_work(struct work_struct *);
 static void ceph_fault(struct ceph_connection *con);
 
+static void init_bio_iter(struct bio *bio, struct bio **iter, int *seg);
+
 /*
  * Nicely render a sockaddr as a string.  An array of formatted
  * strings is used, to approximate reentrancy.
@@ -520,6 +522,10 @@ static void prepare_write_message_data(struct ceph_connection *con)
 		con->out_msg_pos.page_pos = msg->page_alignment;
 	else
 		con->out_msg_pos.page_pos = 0;
+#ifdef CONFIG_BLOCK
+	if (msg->bio && !msg->bio_iter)
+		init_bio_iter(msg->bio, &msg->bio_iter, &msg->bio_seg);
+#endif
 	con->out_msg_pos.data_pos = 0;
 	con->out_msg_pos.did_page_crc = false;
 	con->out_more = 1;  /* data + footer will follow */
@@ -854,11 +860,6 @@ static int write_partial_msg_pages(struct ceph_connection *con)
 	dout("write_partial_msg_pages %p msg %p page %d/%d offset %d\n",
 	     con, con->out_msg, con->out_msg_pos.page, con->out_msg->nr_pages,
 	     con->out_msg_pos.page_pos);
-
-#ifdef CONFIG_BLOCK
-	if (msg->bio && !msg->bio_iter)
-		init_bio_iter(msg->bio, &msg->bio_iter, &msg->bio_seg);
-#endif
 
 	while (data_len > con->out_msg_pos.data_pos) {
 		struct page *page = NULL;
