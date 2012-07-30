@@ -1513,6 +1513,8 @@ static int process_connect(struct ceph_connection *con)
 		if (con->in_reply.flags & CEPH_MSG_CONNECT_LOSSY)
 			set_bit(LOSSYTX, &con->state);
 
+		con->delay = 0;      /* reset backoff memory */
+
 		prepare_read_tag(con);
 		break;
 
