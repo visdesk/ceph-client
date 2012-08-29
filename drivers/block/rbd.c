@@ -2553,6 +2553,14 @@ static ssize_t rbd_add(struct bus_type *bus,
 	INIT_LIST_HEAD(&rbd_dev->snaps);
 	init_rwsem(&rbd_dev->header_rwsem);
 
+	/*
+	 * We don't really need to hold the lock until we've done
+	 * more initialization.  Once the device is registered
+	 * though (via rbd_bus_add_dev()) we need to protect from
+	 * updates.  Just grab the lock now that it's initialized.
+	 */
+	down_write(&rbd_dev->header_rwsem);
+
 	/* generate unique id: find highest unique id, add one */
 	rbd_dev_id_get(rbd_dev);
 
@@ -2598,18 +2606,17 @@ static ssize_t rbd_add(struct bus_type *bus,
 	/* contact OSD, request size info about the object being mapped */
 	rc = rbd_read_header(rbd_dev, &rbd_dev->header);
 	if (rc)
-		goto err_out_bus;
+		goto err_out_unlock;
 
-	/* no need to lock here, as rbd_dev is not registered yet */
 	rc = rbd_dev_snap_devs_update(rbd_dev);
 	if (rc)
-		goto err_out_bus;
+		goto err_out_unlock;
 
-	down_write(&rbd_dev->header_rwsem);
 	rc = rbd_header_set_snap(rbd_dev, snap_name);
-	up_write(&rbd_dev->header_rwsem);
 	if (rc)
-		goto err_out_bus;
+		goto err_out_unlock;
+
+	up_write(&rbd_dev->header_rwsem);
 
 	/* Set up the blkdev mapping. */
 
@@ -2630,6 +2637,8 @@ static ssize_t rbd_add(struct bus_type *bus,
 
 	return count;
 
+err_out_unlock:
+	up_write(&rbd_dev->header_rwsem);
 err_out_bus:
 	/* this will also clean up rest of rbd_dev stuff */
 
@@ -2649,6 +2658,7 @@ err_put_id:
 		kfree(rbd_dev->pool_name);
 	}
 	rbd_dev_id_put(rbd_dev);
+	up_write(&rbd_dev->header_rwsem);
 err_nomem:
 	kfree(rbd_dev);
 	kfree(options);
