@@ -2651,23 +2651,23 @@ static ssize_t rbd_add(struct bus_type *bus,
 	if (rc)
 		goto err_out_unlock;
 
+	rc = rbd_init_watch_dev(rbd_dev);
+	if (rc)
+		goto err_out_unlock;
+
 	up_write(&rbd_dev->header_rwsem);
 
 	/* Everything's ready.  Announce the disk to the world. */
 
 	add_disk(rbd_dev->disk);
+
 	pr_info("%s: added with size 0x%llx\n", rbd_dev->disk->disk_name,
 		(unsigned long long) rbd_dev->mapping.size);
-
-	rc = rbd_init_watch_dev(rbd_dev);
-	if (rc)
-		goto err_out_bus;
 
 	return count;
 
 err_out_unlock:
 	up_write(&rbd_dev->header_rwsem);
-err_out_bus:
 	/* this will also clean up rest of rbd_dev stuff */
 
 	rbd_bus_del_dev(rbd_dev);
