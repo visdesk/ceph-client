@@ -2630,9 +2630,15 @@ static ssize_t rbd_add(struct bus_type *bus,
 		goto err_out_id;
 	rbd_dev->major = rc;
 
-	rc = rbd_bus_add_dev(rbd_dev);
+	/* Set up the blkdev mapping. */
+
+	rc = rbd_init_disk(rbd_dev);
 	if (rc)
 		goto err_out_blkdev;
+
+	rc = rbd_bus_add_dev(rbd_dev);
+	if (rc)
+		goto err_out_disk;
 
 	/*
 	 * At this point cleanup in the event of an error is the job
@@ -2644,12 +2650,6 @@ static ssize_t rbd_add(struct bus_type *bus,
 		goto err_out_unlock;
 
 	up_write(&rbd_dev->header_rwsem);
-
-	/* Set up the blkdev mapping. */
-
-	rc = rbd_init_disk(rbd_dev);
-	if (rc)
-		goto err_out_bus;
 
 	/* Everything's ready.  Announce the disk to the world. */
 
@@ -2673,6 +2673,8 @@ err_out_bus:
 	kfree(options);
 	return rc;
 
+err_out_disk:
+	rbd_free_disk(rbd_dev);
 err_out_blkdev:
 	unregister_blkdev(rbd_dev->major, rbd_dev->name);
 err_out_id:
