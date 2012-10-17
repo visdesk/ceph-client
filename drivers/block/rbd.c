@@ -482,7 +482,8 @@ static void rbd_coll_release(struct kref *kref)
 static bool rbd_dev_ondisk_valid(struct rbd_image_header_ondisk *ondisk)
 {
 	return !memcmp(&ondisk->text,
-			RBD_HEADER_TEXT, sizeof (RBD_HEADER_TEXT));
+			RBD_HEADER_TEXT, sizeof (RBD_HEADER_TEXT))
+		    && ondisk->options.order >= SECTOR_SHIFT;
 }
 
 /*
@@ -1555,22 +1556,36 @@ static int rbd_merge_bvec(struct request_queue *q, struct bvec_merge_data *bmd,
 			  struct bio_vec *bvec)
 {
 	struct rbd_device *rbd_dev = q->queuedata;
-	unsigned int chunk_sectors;
-	sector_t sector;
-	unsigned int bio_sectors;
-	int max;
+	sector_t bio_dev_sector;
+	sector_t sectors_per_seg;
+	sector_t seg_sector_offset;
+	int ret;
 
-	chunk_sectors = 1 << (rbd_dev->header.obj_order - SECTOR_SHIFT);
-	sector = bmd->bi_sector + get_start_sect(bmd->bi_bdev);
-	bio_sectors = bmd->bi_size >> SECTOR_SHIFT;
+	/*
+	 * Use the partition-relative bio start sector to determine
+	 * its sector offset relative to the enclosing device.
+	 */
+	bio_dev_sector = get_start_sect(bmd->bi_bdev) + bmd->bi_sector;
 
-	max =  (chunk_sectors - ((sector & (chunk_sectors - 1))
-				 + bio_sectors)) << SECTOR_SHIFT;
-	if (max < 0)
-		max = 0; /* bio_add cannot handle a negative return */
-	if (max <= bvec->bv_len && bio_sectors == 0)
-		return bvec->bv_len;
-	return max;
+	/* Find how far into its rbd segment that offset lies */
+
+	sectors_per_seg = 1 << (rbd_dev->header.obj_order - SECTOR_SHIFT);
+	seg_sector_offset = bio_dev_sector & (sectors_per_seg - 1);
+
+	/*
+	 * Compute the number of bytes from that offset to the end
+	 * of the segment.
+	 */
+	ret = (int) (sectors_per_seg - seg_sector_offset) << SECTOR_SHIFT;
+
+	/*
+	 * "Note that a block device *must* allow a single page to be
+	 * added to an empty bio."
+	 */
+	if (ret < PAGE_SIZE && !bmd->bi_size)
+		ret = PAGE_SIZE;
+
+	return ret;
 }
 
 static void rbd_free_disk(struct rbd_device *rbd_dev)
