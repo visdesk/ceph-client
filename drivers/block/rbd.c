@@ -1262,13 +1262,6 @@ static int rbd_req_sync_op(struct rbd_device *rbd_dev,
 	if (IS_ERR(pages))
 		return PTR_ERR(pages);
 
-	if (op->op == CEPH_OSD_OP_READ || op->op == CEPH_OSD_OP_WRITE) {
-		op->extent.offset = ofs;
-		op->extent.length = inbound_size;
-		if (op->op == CEPH_OSD_OP_WRITE)
-			op->payload_len = inbound_size;
-	}
-
 	ret = rbd_do_request(NULL, rbd_dev, NULL, CEPH_NOSNAP,
 			  object_name, ofs, inbound_size, NULL,
 			  pages, num_pages,
@@ -1373,6 +1366,9 @@ static int rbd_req_sync_read(struct rbd_device *rbd_dev,
 	op = rbd_create_rw_op(CEPH_OSD_OP_READ, 0);
 	if (!op)
 		return -ENOMEM;
+	op->extent.offset = ofs;
+	op->extent.length = len;
+	op->payload_len = 0;
 
 	ret = rbd_req_sync_op(rbd_dev, CEPH_OSD_FLAG_READ,
 			       op, object_name, ofs, len, buf, NULL, ver);
