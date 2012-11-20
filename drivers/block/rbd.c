@@ -1025,19 +1025,23 @@ out_err:
 	return NULL;
 }
 
-static struct ceph_osd_req_op *rbd_create_rw_op(int opcode, u32 payload_len)
+static struct ceph_osd_req_op *rbd_create_rw_op(int opcode, u64 ofs, u64 len)
 {
 	struct ceph_osd_req_op *op;
 
 	op = kzalloc(sizeof (*op), GFP_NOIO);
 	if (!op)
 		return NULL;
-	/*
-	 * op extent offset and length will be set later on
-	 * after ceph_calc_file_object_mapping().
-	 */
+
 	op->op = opcode;
-	op->payload_len = payload_len;
+	if (opcode == CEPH_OSD_OP_READ || opcode == CEPH_OSD_OP_WRITE) {
+		op->extent.offset = ofs;
+		op->extent.length = len;
+		if (opcode == CEPH_OSD_OP_WRITE) {
+			rbd_assert(len <= (u64) U32_MAX);
+			op->payload_len = len;
+		}
+	}
 
 	return op;
 }
@@ -1297,7 +1301,6 @@ static int rbd_do_op(struct request *rq,
 	u64 seg_len;
 	int ret;
 	struct ceph_osd_req_op *op;
-	u32 payload_len;
 	int opcode;
 	int flags;
 	u64 snapid;
@@ -1312,22 +1315,17 @@ static int rbd_do_op(struct request *rq,
 		opcode = CEPH_OSD_OP_WRITE;
 		flags = CEPH_OSD_FLAG_WRITE|CEPH_OSD_FLAG_ONDISK;
 		snapid = CEPH_NOSNAP;
-		payload_len = seg_len;
 	} else {
 		opcode = CEPH_OSD_OP_READ;
 		flags = CEPH_OSD_FLAG_READ;
 		rbd_assert(!snapc);
 		snapid = rbd_dev->spec->snap_id;
-		payload_len = 0;
 	}
 
 	ret = -ENOMEM;
-	op = rbd_create_rw_op(opcode, payload_len);
+	op = rbd_create_rw_op(opcode, seg_ofs, seg_len);
 	if (!op)
 		goto done;
-	op->extent.offset = seg_ofs;
-	op->extent.length = seg_len;
-	op->payload_len = payload_len;
 
 	/* we've taken care of segment sizes earlier when we
 	   cloned the bios. We should never have a segment
@@ -1363,12 +1361,9 @@ static int rbd_req_sync_read(struct rbd_device *rbd_dev,
 	struct ceph_osd_req_op *op;
 	int ret;
 
-	op = rbd_create_rw_op(CEPH_OSD_OP_READ, 0);
+	op = rbd_create_rw_op(CEPH_OSD_OP_READ, ofs, len);
 	if (!op)
 		return -ENOMEM;
-	op->extent.offset = ofs;
-	op->extent.length = len;
-	op->payload_len = 0;
 
 	ret = rbd_req_sync_op(rbd_dev, CEPH_OSD_FLAG_READ,
 			       op, object_name, ofs, len, buf, NULL, ver);
@@ -1387,7 +1382,7 @@ static int rbd_req_sync_notify_ack(struct rbd_device *rbd_dev,
 	struct ceph_osd_req_op *op;
 	int ret;
 
-	op = rbd_create_rw_op(CEPH_OSD_OP_NOTIFY_ACK, 0);
+	op = rbd_create_rw_op(CEPH_OSD_OP_NOTIFY_ACK, 0, 0);
 	if (!op)
 		return -ENOMEM;
 
@@ -1438,7 +1433,7 @@ static int rbd_req_sync_watch(struct rbd_device *rbd_dev, int start)
 	__le64 version = 0;
 	int ret;
 
-	op = rbd_create_rw_op(CEPH_OSD_OP_WATCH, 0);
+	op = rbd_create_rw_op(CEPH_OSD_OP_WATCH, 0, 0);
 	if (!op)
 		return -ENOMEM;
 
@@ -1501,9 +1496,10 @@ static int rbd_req_sync_exec(struct rbd_device *rbd_dev,
 	 * operation.
 	 */
 	payload_size = class_name_len + method_name_len + outbound_size;
-	op = rbd_create_rw_op(CEPH_OSD_OP_CALL, payload_size);
+	op = rbd_create_rw_op(CEPH_OSD_OP_CALL, 0, 0);
 	if (!op)
 		return -ENOMEM;
+	op->payload_len = payload_size;
 
 	op->cls.class_name = class_name;
 	op->cls.class_len = (__u8) class_name_len;
