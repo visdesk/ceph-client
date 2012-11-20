@@ -1034,19 +1034,47 @@ static struct ceph_osd_req_op *rbd_create_rw_op(int opcode, u64 ofs, u64 len)
 		return NULL;
 
 	op->op = opcode;
-	if (opcode == CEPH_OSD_OP_READ || opcode == CEPH_OSD_OP_WRITE) {
-		op->extent.offset = ofs;
-		op->extent.length = len;
-		if (opcode == CEPH_OSD_OP_WRITE) {
-			rbd_assert(len <= (u64) U32_MAX);
-			op->payload_len = len;
-		}
-	}
 
 	return op;
 }
 
 static void rbd_destroy_op(struct ceph_osd_req_op *op)
+{
+	kfree(op);
+}
+
+struct ceph_osd_req_op *rbd_osd_req_op_create(u16 opcode, ...)
+{
+	struct ceph_osd_req_op *op;
+	va_list args;
+
+	op = kzalloc(sizeof (*op), GFP_NOIO);
+	if (!op)
+		return NULL;
+	op->op = opcode;
+	va_start(args, opcode);
+	switch (opcode) {
+	case CEPH_OSD_OP_READ:
+	case CEPH_OSD_OP_WRITE:
+		/* rbd_osd_req_op_create(READ, offset, length) */
+		/* rbd_osd_req_op_create(WRITE, offset, length) */
+		op->extent.offset = va_arg(args, u64);
+		op->extent.length = va_arg(args, u64);
+		if (opcode == CEPH_OSD_OP_WRITE)
+			op->payload_len = op->extent.length;
+		break;
+	default:
+		rbd_warn(NULL, "unsupported opcode %hu\n", opcode);
+		kfree(op);
+		op = NULL;
+		break;
+	}
+	va_end(args);
+
+	return op;
+}
+
+static void rbd_osd_req_op_destroy(struct ceph_osd_req_op *op)
 {
 	kfree(op);
 }
@@ -1323,7 +1351,7 @@ static int rbd_do_op(struct request *rq,
 	}
 
 	ret = -ENOMEM;
-	op = rbd_create_rw_op(opcode, seg_ofs, seg_len);
+	op = rbd_osd_req_op_create(opcode, seg_ofs, seg_len);
 	if (!op)
 		goto done;
 
@@ -1343,7 +1371,7 @@ static int rbd_do_op(struct request *rq,
 	if (ret < 0)
 		rbd_coll_end_req_index(rq, coll, coll_index,
 					(s32) ret, seg_len);
-	rbd_destroy_op(op);
+	rbd_osd_req_op_destroy(op);
 done:
 	kfree(seg_name);
 	return ret;
@@ -1361,13 +1389,13 @@ static int rbd_req_sync_read(struct rbd_device *rbd_dev,
 	struct ceph_osd_req_op *op;
 	int ret;
 
-	op = rbd_create_rw_op(CEPH_OSD_OP_READ, ofs, len);
+	op = rbd_osd_req_op_create(CEPH_OSD_OP_READ, ofs, len);
 	if (!op)
 		return -ENOMEM;
 
 	ret = rbd_req_sync_op(rbd_dev, CEPH_OSD_FLAG_READ,
 			       op, object_name, ofs, len, buf, NULL, ver);
-	rbd_destroy_op(op);
+	rbd_osd_req_op_destroy(op);
 
 	return ret;
 }
