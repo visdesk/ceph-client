@@ -1654,14 +1654,18 @@ int ceph_setattr(struct dentry *dentry, struct iattr *attr)
 			err = -EINVAL;
 			goto out;
 		}
-		if ((issued & CEPH_CAP_FILE_EXCL) &&
-		    attr->ia_size > inode->i_size) {
+		if (issued & CEPH_CAP_FILE_EXCL) {
+			/* setup vmtruncate */
+			ci->i_truncate_size = attr->ia_size;
+			ci->i_truncate_pending++;
+
 			inode->i_size = attr->ia_size;
 			inode->i_blocks =
 				(attr->ia_size + (1 << 9) - 1) >> 9;
 			inode->i_ctime = attr->ia_ctime;
 			ci->i_reported_size = attr->ia_size;
 			dirtied |= CEPH_CAP_FILE_EXCL;
+
 		} else if ((issued & CEPH_CAP_FILE_SHARED) == 0 ||
 			   attr->ia_size != inode->i_size) {
 			req->r_args.setattr.size = cpu_to_le64(attr->ia_size);
