@@ -1654,14 +1654,24 @@ int ceph_setattr(struct dentry *dentry, struct iattr *attr)
 			err = -EINVAL;
 			goto out;
 		}
-		if ((issued & CEPH_CAP_FILE_EXCL) &&
-		    attr->ia_size > inode->i_size) {
+		if (issued & CEPH_CAP_FILE_EXCL) {
+		    if (attr->ia_size > inode->i_size) {
+			/* truncate up, set size locally and trigger cap flush */
 			inode->i_size = attr->ia_size;
 			inode->i_blocks =
 				(attr->ia_size + (1 << 9) - 1) >> 9;
 			inode->i_ctime = attr->ia_ctime;
 			ci->i_reported_size = attr->ia_size;
 			dirtied |= CEPH_CAP_FILE_EXCL;
+		    } else if (attr->ia_size < inode->i_size) {
+			/* truncate down, must send setattr to mds */
+			req->r_args.setattr.size = cpu_to_le64(attr->ia_size);
+			req->r_args.setattr.old_size =
+				cpu_to_le64(inode->i_size);
+			inode->i_size = attr->ia_size;
+			mask |= CEPH_SETATTR_SIZE;
+		    }
+		    /* if truncate is size of inode, do nothing */
 		} else if ((issued & CEPH_CAP_FILE_SHARED) == 0 ||
 			   attr->ia_size != inode->i_size) {
 			req->r_args.setattr.size = cpu_to_le64(attr->ia_size);
