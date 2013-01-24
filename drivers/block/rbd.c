@@ -393,6 +393,8 @@ void rbd_warn(struct rbd_device *rbd_dev, const char *fmt, ...)
 #  define rbd_assert(expr)	((void) 0)
 #endif /* !RBD_DEBUG */
 
+static void rbd_parent_read(struct rbd_obj_request *obj_request);
+
 static int rbd_dev_refresh(struct rbd_device *rbd_dev, u64 *hver);
 static int rbd_dev_v2_refresh(struct rbd_device *rbd_dev, u64 *hver);
 
@@ -1259,16 +1261,12 @@ static void rbd_obj_request_complete(struct rbd_obj_request *obj_request)
 		complete_all(&obj_request->completion);
 }
 
-static void rbd_osd_read_callback(struct rbd_obj_request *obj_request,
-				struct ceph_osd_op *op)
+static void rbd_read_finish(struct rbd_obj_request *obj_request, u64 xferred)
 {
-	u64 xferred;
-
 	/*
 	 * We support a 64-bit length, but ultimately it has to be
 	 * passed to blk_end_request(), which takes an unsigned int.
 	 */
-	xferred = le64_to_cpu(op->extent.length);
 	rbd_assert(xferred < (u64) UINT_MAX);
 	if (obj_request->result == (s32) -ENOENT) {
 		zero_bio_chain(obj_request->bio_list, 0);
@@ -1279,6 +1277,19 @@ static void rbd_osd_read_callback(struct rbd_obj_request *obj_request,
 	}
 	obj_request->xferred = xferred;
 	atomic_set(&obj_request->done, 1);
+}
+
+static void rbd_osd_read_callback(struct rbd_obj_request *obj_request,
+				struct ceph_osd_op *op)
+{
+	bool image_has_parent;
+
+	image_has_parent = obj_request->img_request &&
+				obj_request->img_request->rbd_dev->parent;
+	if (obj_request->result == (s32) -ENOENT && image_has_parent)
+		rbd_parent_read(obj_request);
+	else
+		rbd_read_finish(obj_request, le64_to_cpu(op->extent.length));
 }
 
 static void rbd_osd_write_callback(struct rbd_obj_request *obj_request,
@@ -1539,6 +1550,9 @@ static void rbd_img_request_destroy(struct kref *kref)
 	if (img_request->write_request)
 		ceph_put_snap_context(img_request->snapc);
 
+	if (img_request->type == IMG_REQUEST_PARENT)
+		rbd_obj_request_put(img_request->obj_request);
+
 	kfree(img_request);
 }
 
@@ -1625,10 +1639,9 @@ static bool rbd_img_obj_end_request(struct rbd_obj_request *obj_request)
 	struct rbd_img_request *img_request = obj_request->img_request;
 	unsigned int xferred;
 	int result;
+	bool more;
 
 	rbd_assert(img_req_type_valid(img_request->type));
-	if (img_request->type == IMG_REQUEST_BLOCK)
-		rbd_assert(img_request->rq != NULL);
 
 	rbd_assert(obj_request->xferred <= (u64) UINT_MAX);
 	xferred = (unsigned int) obj_request->xferred;
@@ -1647,7 +1660,15 @@ static bool rbd_img_obj_end_request(struct rbd_obj_request *obj_request)
 			img_request->result = result;
 	}
 
-	return blk_end_request(img_request->rq, result, xferred);
+	if (img_request->type == IMG_REQUEST_BLOCK) {
+		rbd_assert(img_request->rq != NULL);
+		more = blk_end_request(img_request->rq, result, xferred);
+	} else {
+		rbd_assert(img_request->obj_request != NULL);
+		more = obj_request->which < img_request->obj_request_count - 1;
+	}
+
+	return more;
 }
 
 static void rbd_img_obj_callback(struct rbd_obj_request *obj_request)
@@ -1706,6 +1727,60 @@ static int rbd_img_request_submit(struct rbd_img_request *img_request)
 	}
 
 	return 0;
+}
+
+static void rbd_parent_read_callback(struct rbd_img_request *img_request)
+{
+	struct rbd_obj_request *obj_request;
+
+	rbd_assert(img_request->type == IMG_REQUEST_PARENT);
+
+	obj_request = img_request->obj_request;
+	rbd_assert(obj_request != NULL);
+	obj_request->result = img_request->result;
+	rbd_read_finish(obj_request, img_request->length);
+	rbd_obj_request_complete(obj_request);
+}
+
+static void rbd_parent_read(struct rbd_obj_request *obj_request)
+{
+	struct rbd_device *rbd_dev = obj_request->img_request->rbd_dev;
+	struct rbd_img_request *img_request;
+	int result;
+
+	rbd_assert(rbd_dev->parent != NULL);
+	rbd_assert(obj_request->result == (s32) -ENOENT);
+	rbd_assert(obj_request->type == OBJ_REQUEST_BIO);
+
+	/* rbd_read_finish(obj_request, obj_request->length); */
+
+	img_request = rbd_img_request_create(rbd_dev->parent,
+						obj_request->img_offset,
+						obj_request->length,
+						false, IMG_REQUEST_PARENT);
+	result = -ENOMEM;
+	if (!img_request)
+		goto out_err;
+
+	rbd_obj_request_get(obj_request);
+	img_request->obj_request = obj_request;
+
+	result = rbd_img_request_fill_bio(img_request, obj_request->bio_list);
+	if (result)
+		goto out_err;
+
+	img_request->callback = rbd_parent_read_callback;
+	result = rbd_img_request_submit(img_request);
+	if (result)
+		goto out_err;
+
+	return;
+out_err:
+	if (img_request)
+		rbd_img_request_put(img_request);
+	obj_request->result = result;
+	obj_request->xferred = 0;
+	atomic_set(&obj_request->done, 1);
 }
 
 static int rbd_obj_notify_ack(struct rbd_device *rbd_dev,
