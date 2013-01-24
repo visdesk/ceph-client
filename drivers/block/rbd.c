@@ -180,6 +180,7 @@ struct rbd_obj_request {
 	u64			length;		/* bytes from offset */
 
 	struct rbd_img_request	*img_request;
+	u64			img_offset;	/* image relative offset */
 	struct list_head	links;		/* img_request->obj_requests */
 	u32			which;		/* posn image request list */
 
@@ -1548,15 +1549,15 @@ static int rbd_img_request_fill_bio(struct rbd_img_request *img_request,
 	struct rbd_obj_request *obj_request = NULL;
 	struct rbd_obj_request *next_obj_request;
 	unsigned int bio_offset;
-	u64 image_offset;
+	u64 img_offset;
 	u64 resid;
 	u16 opcode;
 
 	opcode = img_request->write_request ? CEPH_OSD_OP_WRITE
 					      : CEPH_OSD_OP_READ;
 	bio_offset = 0;
-	image_offset = img_request->offset;
-	rbd_assert(image_offset == bio_list->bi_sector << SECTOR_SHIFT);
+	img_offset = img_request->offset;
+	rbd_assert(img_offset == bio_list->bi_sector << SECTOR_SHIFT);
 	resid = img_request->length;
 	while (resid) {
 		const char *object_name;
@@ -1565,11 +1566,11 @@ static int rbd_img_request_fill_bio(struct rbd_img_request *img_request,
 		u64 offset;
 		u64 length;
 
-		object_name = rbd_segment_name(rbd_dev, image_offset);
+		object_name = rbd_segment_name(rbd_dev, img_offset);
 		if (!object_name)
 			goto out_unwind;
-		offset = rbd_segment_offset(rbd_dev, image_offset);
-		length = rbd_segment_length(rbd_dev, image_offset, resid);
+		offset = rbd_segment_offset(rbd_dev, img_offset);
+		length = rbd_segment_length(rbd_dev, img_offset, resid);
 		obj_request = rbd_obj_request_create(object_name,
 						offset, length,
 						OBJ_REQUEST_BIO);
@@ -1601,9 +1602,10 @@ static int rbd_img_request_fill_bio(struct rbd_img_request *img_request,
 			goto out_partial;
 		/* status and version are initially zero-filled */
 
+		obj_request->img_offset = img_offset;
 		rbd_img_obj_request_add(img_request, obj_request);
 
-		image_offset += length;
+		img_offset += length;
 		resid -= length;
 	}
 
@@ -1632,9 +1634,15 @@ static bool rbd_img_obj_end_request(struct rbd_obj_request *obj_request)
 	xferred = (unsigned int) obj_request->xferred;
 	result = (int) obj_request->result;
 	if (result) {
-		rbd_warn(NULL, "obj_request %s result %d xferred %u\n",
+		struct rbd_device *rbd_dev;
+
+		rbd_dev = img_request->rbd_dev;
+		rbd_warn(rbd_dev, "%s %llx at %llx (%llx)\n",
 			img_request->write_request ? "write" : "read",
-			result, xferred);
+			obj_request->length, obj_request->img_offset,
+			obj_request->offset);
+		rbd_warn(rbd_dev, "  result %d xferred %x\n", result, xferred);
+
 		if (!img_request->result)
 			img_request->result = result;
 	}
@@ -1933,6 +1941,9 @@ static void rbd_request_fn(struct request_queue *q)
 
 		spin_unlock_irq(q->queue_lock);
 
+		offset = (u64) blk_rq_pos(rq) << SECTOR_SHIFT;
+		length = (u64) blk_rq_bytes(rq);
+
 		/* Disallow writes to a read-only device */
 
 		if (write_request) {
@@ -1956,9 +1967,6 @@ static void rbd_request_fn(struct request_queue *q)
 			goto end_request;
 		}
 
-		offset = (u64) blk_rq_pos(rq) << SECTOR_SHIFT;
-		length = (u64) blk_rq_bytes(rq);
-
 		result = -EINVAL;
 		if (WARN_ON(offset && length > U64_MAX - offset + 1))
 			goto end_request;	/* Shouldn't happen */
@@ -1980,8 +1988,10 @@ static void rbd_request_fn(struct request_queue *q)
 end_request:
 		spin_lock_irq(q->queue_lock);
 		if (result < 0) {
-			rbd_warn(rbd_dev, "obj_request %s result %d\n",
-				write_request ? "write" : "read", result);
+			rbd_warn(rbd_dev, "%s %llx at %llx result %d\n",
+				write_request ? "write" : "read",
+				length, offset, result);
+
 			__blk_end_request_all(rq, result);
 		}
 	}
