@@ -205,15 +205,21 @@ struct rbd_obj_request {
 	struct kref		kref;
 };
 
+enum img_req_type { IMG_REQUEST_BLOCK, IMG_REQUEST_PARENT };
+
 struct rbd_img_request {
-	struct request		*rq;
 	struct rbd_device	*rbd_dev;
 	u64			offset;	/* starting image byte offset */
 	u64			length;	/* byte count from offset */
-	bool			write_request;	/* false for read */
+	union {
+		struct request		*rq;
+		struct rbd_obj_request	*obj_request;
+	};
+	enum img_req_type	type;
+	bool			write_request;		/* false for read */
 	union {
 		struct ceph_snap_context *snapc;	/* for writes */
-		u64		snap_id;		/* for reads */
+		u64			snap_id;	/* for reads */
 	};
 	spinlock_t		completion_lock;/* protects next_completion */
 	u32			next_completion;
@@ -1138,6 +1144,17 @@ static bool obj_request_type_valid(enum obj_request_type type)
 	}
 }
 
+static bool img_req_type_valid(enum img_req_type type)
+{
+	switch (type) {
+	case IMG_REQUEST_BLOCK:
+	case IMG_REQUEST_PARENT:
+		return true;
+	default:
+		return false;
+	}
+}
+
 struct ceph_osd_req_op *rbd_osd_req_op_create(u16 opcode, ...)
 {
 	struct ceph_osd_req_op *op;
@@ -1462,7 +1479,8 @@ static void rbd_obj_request_destroy(struct kref *kref)
  */
 struct rbd_img_request *rbd_img_request_create(struct rbd_device *rbd_dev,
 					u64 offset, u64 length,
-					bool write_request)
+					bool write_request,
+					enum img_req_type type)
 {
 	struct rbd_img_request *img_request;
 	struct ceph_snap_context *snapc = NULL;
@@ -1485,6 +1503,7 @@ struct rbd_img_request *rbd_img_request_create(struct rbd_device *rbd_dev,
 	img_request->rbd_dev = rbd_dev;
 	img_request->offset = offset;
 	img_request->length = length;
+	img_request->type = type;
 	img_request->write_request = write_request;
 	if (write_request)
 		img_request->snapc = snapc;
@@ -1607,7 +1626,9 @@ static void rbd_img_obj_callback(struct rbd_obj_request *obj_request)
 
 	img_request = obj_request->img_request;
 	rbd_assert(img_request != NULL);
-	rbd_assert(img_request->rq != NULL);
+	rbd_assert(img_req_type_valid(img_request->type));
+	if (img_request->type == IMG_REQUEST_BLOCK)
+		rbd_assert(img_request->rq != NULL);
 	rbd_assert(which != BAD_WHICH);
 	rbd_assert(which < img_request->obj_request_count);
 	rbd_assert(which >= img_request->next_completion);
@@ -1938,7 +1959,8 @@ static void rbd_request_fn(struct request_queue *q)
 
 		result = -ENOMEM;
 		img_request = rbd_img_request_create(rbd_dev, offset, length,
-							write_request);
+							write_request,
+							IMG_REQUEST_BLOCK);
 		if (!img_request)
 			goto end_request;
 
