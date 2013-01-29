@@ -1130,8 +1130,8 @@ int ceph_fill_trace(struct super_block *sb, struct ceph_mds_request *req,
 					    req->r_request_started);
 		dout(" final dn %p\n", dn);
 		i++;
-	} else if (req->r_op == CEPH_MDS_OP_LOOKUPSNAP ||
-		   req->r_op == CEPH_MDS_OP_MKSNAP) {
+	} else if ((req->r_op == CEPH_MDS_OP_LOOKUPSNAP ||
+		   req->r_op == CEPH_MDS_OP_MKSNAP) && !req->r_aborted) {
 		struct dentry *dn = req->r_dentry;
 
 		/* fill out a snapdir LOOKUPSNAP dentry */
