@@ -1708,9 +1708,11 @@ EXPORT_SYMBOL(ceph_osdc_wait_request);
 /*
  * sync - wait for all in-flight requests to flush.  avoid starvation.
  */
-void ceph_osdc_sync(struct ceph_osd_client *osdc)
+int ceph_osdc_sync(struct ceph_osd_client *osdc)
 {
 	struct ceph_osd_request *req;
+	int ret = 0;
+	int localr = 0;
 	u64 last_tid, next_tid = 0;
 
 	mutex_lock(&osdc->request_mutex);
@@ -1722,7 +1724,6 @@ void ceph_osdc_sync(struct ceph_osd_client *osdc)
 		if (req->r_tid > last_tid)
 			break;
 
-		next_tid = req->r_tid + 1;
 		if ((req->r_flags & CEPH_OSD_FLAG_WRITE) == 0)
 			continue;
 
@@ -1730,12 +1731,19 @@ void ceph_osdc_sync(struct ceph_osd_client *osdc)
 		mutex_unlock(&osdc->request_mutex);
 		dout("sync waiting on tid %llu (last is %llu)\n",
 		     req->r_tid, last_tid);
-		wait_for_completion(&req->r_safe_completion);
+		localr = wait_for_completion(&req->r_safe_completion);
 		mutex_lock(&osdc->request_mutex);
 		ceph_osdc_put_request(req);
+		if (localret) {
+			dout("request %llu failed -- %i!\n", next_tid, localr);
+			if (!ret)
+				ret = localret;
+		}
+		next_tid = req->r_tid + 1;
 	}
 	mutex_unlock(&osdc->request_mutex);
-	dout("sync done (thru tid %llu)\n", last_tid);
+	dout("sync done (thru tid %llu) with result %i\n", next_tid, ret);
+	return ret;
 }
 EXPORT_SYMBOL(ceph_osdc_sync);
 

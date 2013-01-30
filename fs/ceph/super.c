@@ -93,6 +93,7 @@ static int ceph_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 static int ceph_sync_fs(struct super_block *sb, int wait)
 {
+	int ret = 0;
 	struct ceph_fs_client *fsc = ceph_sb_to_client(sb);
 
 	if (!wait) {
@@ -103,10 +104,11 @@ static int ceph_sync_fs(struct super_block *sb, int wait)
 	}
 
 	dout("sync_fs (blocking)\n");
-	ceph_osdc_sync(&fsc->client->osdc);
+	ret = ceph_osdc_sync(&fsc->client->osdc);
+	dout("sync_fs got %i from ceph_osd_sync", ret);
 	ceph_mdsc_sync(fsc->mdsc);
 	dout("sync_fs (blocking) done\n");
-	return 0;
+	return ret;
 }
 
 /*
