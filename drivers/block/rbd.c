@@ -400,6 +400,8 @@ static int rbd_open(struct block_device *bdev, fmode_t mode)
 	else
 		rbd_dev->open_count++;
 	spin_unlock_irq(&rbd_dev->lock);
+printk("%s: open_count is now %lu, removing %s\n", __func__,
+	rbd_dev->open_count, removing ? "true" : "false");
 	if (removing)
 		return -ENOENT;
 
@@ -420,6 +422,8 @@ static int rbd_release(struct gendisk *disk, fmode_t mode)
 	open_count_before = rbd_dev->open_count--;
 	spin_unlock_irq(&rbd_dev->lock);
 	rbd_assert(open_count_before > 0);
+
+printk("%s: open_count is now %lu\n", __func__, open_count_before - 1);
 
 	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
 	put_device(&rbd_dev->dev);
@@ -1731,7 +1735,11 @@ static int rbd_dev_header_watch_sync(struct rbd_device *rbd_dev, int start)
 		if (ret < 0)
 			return ret;
 		rbd_assert(rbd_dev->watch_event != NULL);
-	}
+		printk("%s: CREATED watch event %p\n", __func__,
+			rbd_dev->watch_event);
+	} else
+		printk("%s: STOPPING watch request %p\n", __func__,
+			rbd_dev->watch_request->osd_req);
 
 	ret = -ENOMEM;
 	obj_request = rbd_obj_request_create(rbd_dev->header_name, 0, 0,
@@ -1775,6 +1783,8 @@ static int rbd_dev_header_watch_sync(struct rbd_device *rbd_dev, int start)
 	 */
 	if (start) {
 		rbd_dev->watch_request = obj_request;
+		printk("%s: STARTED watch request %p\n", __func__,
+			rbd_dev->watch_request->osd_req);
 
 		return 0;
 	}
@@ -1785,6 +1795,8 @@ static int rbd_dev_header_watch_sync(struct rbd_device *rbd_dev, int start)
 	rbd_dev->watch_request = NULL;
 out_cancel:
 	/* Cancel the event if we're tearing down, or on error */
+	printk("%s: DESTROYING watch event %p\n", __func__,
+		rbd_dev->watch_event);
 	ceph_osdc_cancel_event(rbd_dev->watch_event);
 	rbd_dev->watch_event = NULL;
 	if (obj_request)
@@ -4105,6 +4117,7 @@ static ssize_t rbd_remove(struct bus_type *bus,
 	else
 		set_bit(RBD_DEV_FLAG_REMOVING, &rbd_dev->flags);
 	spin_unlock_irq(&rbd_dev->lock);
+printk("%s: open_count is %lu, ret %d\n", __func__, rbd_dev->open_count, ret);
 	if (ret < 0)
 		goto done;
 
