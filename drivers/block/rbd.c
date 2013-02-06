@@ -1224,6 +1224,7 @@ static void rbd_osd_trivial_callback(struct rbd_obj_request *obj_request,
 				struct ceph_osd_op *op)
 {
 	atomic_set(&obj_request->done, 1);
+	smp_wmb();
 }
 
 static void rbd_obj_request_complete(struct rbd_obj_request *obj_request)
@@ -1254,6 +1255,7 @@ static void rbd_osd_read_callback(struct rbd_obj_request *obj_request,
 	}
 	obj_request->xferred = xferred;
 	atomic_set(&obj_request->done, 1);
+	smp_wmb();
 }
 
 static void rbd_osd_write_callback(struct rbd_obj_request *obj_request,
@@ -1261,6 +1263,7 @@ static void rbd_osd_write_callback(struct rbd_obj_request *obj_request,
 {
 	obj_request->xferred = le64_to_cpu(op->extent.length);
 	atomic_set(&obj_request->done, 1);
+	smp_wmb();
 }
 
 static void rbd_osd_req_callback(struct ceph_osd_request *osd_req,
@@ -1304,6 +1307,7 @@ static void rbd_osd_req_callback(struct ceph_osd_request *osd_req,
 		break;
 	}
 
+	smp_rmb();
 	if (atomic_read(&obj_request->done))
 		rbd_obj_request_complete(obj_request);
 }
@@ -1412,6 +1416,7 @@ static struct rbd_obj_request *rbd_obj_request_create(const char *object_name,
 	obj_request->type = type;
 	INIT_LIST_HEAD(&obj_request->links);
 	atomic_set(&obj_request->done, 0);
+	smp_wmb();
 	init_completion(&obj_request->completion);
 	kref_init(&obj_request->kref);
 
@@ -1615,6 +1620,7 @@ static void rbd_img_obj_callback(struct rbd_obj_request *obj_request)
 		rbd_assert(more);
 		rbd_assert(which < img_request->obj_request_count);
 
+		smp_rmb();
 		if (!atomic_read(&obj_request->done))
 			break;
 
